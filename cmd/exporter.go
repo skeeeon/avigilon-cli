@@ -27,7 +27,7 @@ var (
 	expKey        string
 	expIntID      string
 	expPort       string
-	serviceAction string // New flag for "install", "uninstall", "start", "stop"
+	serviceAction string // "install", "uninstall", "start", "stop"
 )
 
 // --- SERVICE WRAPPER ---
@@ -51,9 +51,8 @@ func (p *program) run() {
 	log.Println("Attempting initial login...")
 	if _, err := p.api.Login(); err != nil {
 		log.Printf("Fatal: Initial login failed: %v", err)
-		// In a service context, we might want to retry loop here instead of dying,
-		// but for now we exit so the service manager attempts a restart.
-		os.Exit(1) 
+		// We exit here so the service manager (systemd/Windows Services) knows we failed and can handle restarts.
+		os.Exit(1)
 	}
 	log.Println("Initial login successful.")
 
@@ -76,7 +75,7 @@ func (p *program) run() {
 	}
 
 	log.Printf("Avigilon Exporter listening on %s", addr)
-	
+
 	// Blocking call to listen
 	if err := p.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("HTTP Server error: %v", err)
@@ -88,7 +87,7 @@ func (p *program) Stop(s service.Service) error {
 	log.Println("Stopping service...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if p.server != nil {
 		if err := p.server.Shutdown(ctx); err != nil {
 			log.Printf("Server forced to shutdown: %v", err)
@@ -98,16 +97,12 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
-// --- COLLECTOR LOGIC (Same as before) ---
+// --- COLLECTOR LOGIC ---
 
 type AvigilonCollector struct {
 	Client *client.AvigilonClient
 	Mutex  sync.Mutex
 }
-
-// ... (Keep existing Metric Descriptors: upDesc, cameraUpDesc, etc.) ...
-// For brevity in this snippet, ensure you keep the var definitions from the previous exporter.go here.
-// I will include the variable definitions below to ensure the file is copy-pasteable.
 
 var (
 	upDesc = prometheus.NewDesc(
@@ -157,8 +152,12 @@ func (c *AvigilonCollector) Collect(ch chan<- prometheus.Metric) {
 	healthStr, err := c.Client.GetHealth()
 	healthVal := 0.0
 	if err == nil {
-		if strings.Contains(healthStr, "GOOD") { healthVal = 1.0 }
-		if strings.Contains(healthStr, "WARN") { healthVal = 0.5 }
+		if strings.Contains(healthStr, "GOOD") {
+			healthVal = 1.0
+		}
+		if strings.Contains(healthStr, "WARN") {
+			healthVal = 0.5
+		}
 	}
 	ch <- prometheus.MustNewConstMetric(systemHealthDesc, prometheus.GaugeValue, healthVal)
 
@@ -172,18 +171,26 @@ func (c *AvigilonCollector) Collect(ch chan<- prometheus.Metric) {
 		stateCounts := make(map[string]float64)
 		for _, cam := range cams {
 			isUp := 0.0
-			if strings.EqualFold(cam.ConnectionState, "CONNECTED") { isUp = 1.0 }
+			if strings.EqualFold(cam.ConnectionState, "CONNECTED") {
+				isUp = 1.0
+			}
 			ip := cam.IPAddress
-			if ip == "" { ip = "unknown" }
-			
+			if ip == "" {
+				ip = "unknown"
+			}
+
 			ch <- prometheus.MustNewConstMetric(cameraUpDesc, prometheus.GaugeValue, isUp, cam.ID, cam.Name, cam.Model, ip)
-			
+
 			hasRec := 0.0
-			if cam.RecordedData { hasRec = 1.0 }
+			if cam.RecordedData {
+				hasRec = 1.0
+			}
 			ch <- prometheus.MustNewConstMetric(cameraRecordingDesc, prometheus.GaugeValue, hasRec, cam.ID, cam.Name)
 
 			st := strings.ToUpper(cam.ConnectionState)
-			if st == "" { st = "UNKNOWN" }
+			if st == "" {
+				st = "UNKNOWN"
+			}
 			stateCounts[st]++
 		}
 		for st, cnt := range stateCounts {
@@ -199,7 +206,9 @@ func (c *AvigilonCollector) Collect(ch chan<- prometheus.Metric) {
 		alarmStates := make(map[string]float64)
 		for _, a := range alarms {
 			st := strings.ToUpper(a.State)
-			if st == "" { st = "UNKNOWN" }
+			if st == "" {
+				st = "UNKNOWN"
+			}
 			alarmStates[st]++
 		}
 		for st, cnt := range alarmStates {
@@ -217,25 +226,37 @@ func (c *AvigilonCollector) Collect(ch chan<- prometheus.Metric) {
 // --- RETRY HELPERS ---
 func (c *AvigilonCollector) fetchCamerasWithRetry() ([]models.Camera, error) {
 	res, err := c.Client.GetCameras()
-	if err == nil { return res, nil }
+	if err == nil {
+		return res, nil
+	}
 	if isAuthError(err) {
-		if _, e := c.Client.Login(); e == nil { return c.Client.GetCameras() }
+		if _, e := c.Client.Login(); e == nil {
+			return c.Client.GetCameras()
+		}
 	}
 	return nil, err
 }
 func (c *AvigilonCollector) fetchAlarmsWithRetry() ([]models.Alarm, error) {
 	res, err := c.Client.GetAlarms()
-	if err == nil { return res, nil }
+	if err == nil {
+		return res, nil
+	}
 	if isAuthError(err) {
-		if _, e := c.Client.Login(); e == nil { return c.Client.GetAlarms() }
+		if _, e := c.Client.Login(); e == nil {
+			return c.Client.GetAlarms()
+		}
 	}
 	return nil, err
 }
 func (c *AvigilonCollector) fetchServersWithRetry() ([]models.Server, error) {
 	res, err := c.Client.GetServers()
-	if err == nil { return res, nil }
+	if err == nil {
+		return res, nil
+	}
 	if isAuthError(err) {
-		if _, e := c.Client.Login(); e == nil { return c.Client.GetServers() }
+		if _, e := c.Client.Login(); e == nil {
+			return c.Client.GetServers()
+		}
 	}
 	return nil, err
 }
@@ -249,9 +270,58 @@ var exporterCmd = &cobra.Command{
 	Use:   "exporter",
 	Short: "Start Prometheus Exporter service",
 	Long: `Starts a long-running HTTP server that exposes Avigilon metrics.
-Can be installed as a system service.`,
+Can be installed as a system service on Windows or Linux.
+
+Environment Variable Support:
+If flags are not provided, the exporter will look for the following environment variables. 
+This is the recommended way to configure the Windows Service via Registry 
+(HKLM\SYSTEM\CurrentControlSet\Services\avigilon-exporter\Environment).
+
+  AVIGILON_HOST
+  AVIGILON_USERNAME
+  AVIGILON_PASSWORD
+  AVIGILON_NONCE
+  AVIGILON_KEY
+  AVIGILON_INTEGRATION_ID
+  AVIGILON_PORT
+`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// 1. Setup Client Config
+
+		// ---------------------------------------------------------
+		// 1. Runtime Fallback: Check Env Vars if flags are empty
+		//    This allows the Service to pick up Registry keys at runtime.
+		// ---------------------------------------------------------
+		if expHost == "" {
+			expHost = os.Getenv("AVIGILON_HOST")
+		}
+		if expPass == "" {
+			expPass = os.Getenv("AVIGILON_PASSWORD")
+		}
+		if expNonce == "" {
+			expNonce = os.Getenv("AVIGILON_NONCE")
+		}
+		if expKey == "" {
+			expKey = os.Getenv("AVIGILON_KEY")
+		}
+		if expIntID == "" {
+			expIntID = os.Getenv("AVIGILON_INTEGRATION_ID")
+		}
+
+		// Handle Port override
+		if envPort := os.Getenv("AVIGILON_PORT"); envPort != "" && expPort == "9100" {
+			expPort = envPort
+		}
+
+		// Handle Username override (Flag default is "administrator")
+		// If the user hasn't explicitly set the flag (hard to tell with Cobra default),
+		// but has set the ENV var, we prioritize the ENV var to allow overriding default.
+		if envUser := os.Getenv("AVIGILON_USERNAME"); envUser != "" {
+			expUser = envUser
+		}
+
+		// ---------------------------------------------------------
+		// 2. Prepare Client Configuration
+		// ---------------------------------------------------------
 		hostClean := strings.TrimRight(expHost, "/")
 		cfg := client.ClientConfig{
 			BaseURL:       hostClean,
@@ -262,24 +332,45 @@ Can be installed as a system service.`,
 			IntegrationID: expIntID,
 		}
 
-		// 2. Define Service Configuration
+		// ---------------------------------------------------------
+		// 3. Define Service Configuration & Arguments
+		// ---------------------------------------------------------
+
+		// dynamically build arguments based on what is currently set.
+		// If a variable is empty here, it means it wasn't provided by Flag OR Env.
+		// We do NOT want to bake empty flags into the service arguments,
+		// because that would override the Registry/Env check on the next run.
+		svcArgs := []string{"exporter"}
+
+		if expHost != "" {
+			svcArgs = append(svcArgs, "--host", expHost)
+		}
+		if expUser != "administrator" { // Only bake in if different from default
+			svcArgs = append(svcArgs, "--username", expUser)
+		}
+		// NOTE: If you are installing the service and want it to use Registry Credentials,
+		// do NOT pass the --password/--key/--nonce flags during install.
+		if expPass != "" {
+			svcArgs = append(svcArgs, "--password", expPass)
+		}
+		if expNonce != "" {
+			svcArgs = append(svcArgs, "--nonce", expNonce)
+		}
+		if expKey != "" {
+			svcArgs = append(svcArgs, "--key", expKey)
+		}
+		if expIntID != "" {
+			svcArgs = append(svcArgs, "--integration-id", expIntID)
+		}
+		if expPort != "9100" {
+			svcArgs = append(svcArgs, "--port", expPort)
+		}
+
 		svcConfig := &service.Config{
 			Name:        "avigilon-exporter",
 			DisplayName: "Avigilon Prometheus Exporter",
 			Description: "Exposes Avigilon VMS metrics to Prometheus",
-			// Arguments passed to the binary when run as a service
-			Arguments: []string{
-				"exporter",
-				"--host", expHost,
-				"--username", expUser,
-				"--password", expPass,
-				"--nonce", expNonce,
-				"--key", expKey,
-				"--port", expPort,
-			},
-		}
-		if expIntID != "" {
-			svcConfig.Arguments = append(svcConfig.Arguments, "--integration-id", expIntID)
+			Arguments:   svcArgs,
 		}
 
 		prg := &program{
@@ -291,15 +382,25 @@ Can be installed as a system service.`,
 			log.Fatal(err)
 		}
 
-		// 3. Handle Service Control Actions (Install, Start, Stop, Uninstall)
+		// ---------------------------------------------------------
+		// 4. Handle Service Control Actions
+		// ---------------------------------------------------------
 		if serviceAction != "" {
+			// INSTALL VALIDATION
 			if serviceAction == "install" {
-				// Validate required flags before installing
-				if expHost == "" || expPass == "" || expNonce == "" || expKey == "" {
-					log.Fatal("Error: You must provide all credentials (--host, --password, --nonce, --key) to install the service.")
+				// We no longer Fatal() here. If credentials are missing, we assume
+				// the user intends to configure them via Registry/Env later.
+				if expPass == "" || expNonce == "" || expKey == "" {
+					fmt.Println("Warning: Credentials not provided via flags.")
+					fmt.Println("To complete setup, you must set the following Environment Variables")
+					fmt.Println("(or Registry Keys in HKLM\\SYSTEM\\CurrentControlSet\\Services\\avigilon-exporter\\Environment):")
+					fmt.Println("  - AVIGILON_HOST")
+					fmt.Println("  - AVIGILON_PASSWORD")
+					fmt.Println("  - AVIGILON_NONCE")
+					fmt.Println("  - AVIGILON_KEY")
 				}
 			}
-			
+
 			err = service.Control(s, serviceAction)
 			if err != nil {
 				log.Fatalf("Failed to %s service: %v", serviceAction, err)
@@ -308,8 +409,16 @@ Can be installed as a system service.`,
 			return
 		}
 
-		// 4. Run the Service (Blocking)
-		// This happens when the Service Manager starts the binary, OR when run interactively without flags
+		// ---------------------------------------------------------
+		// 5. Run the Service (Interactive or Service Manager)
+		// ---------------------------------------------------------
+
+		// STRICT VALIDATION: If we are actually trying to run (not just install),
+		// we must have credentials now (either from Flags or Env/Registry).
+		if expHost == "" || expPass == "" || expNonce == "" || expKey == "" {
+			log.Fatal("Fatal Error: Missing required credentials.\nPlease provide flags or set AVIGILON_* environment variables.")
+		}
+
 		logger, err := s.Logger(nil)
 		if err != nil {
 			log.Fatal(err)
@@ -329,7 +438,7 @@ func init() {
 	exporterCmd.Flags().StringVar(&expKey, "key", "", "User Key")
 	exporterCmd.Flags().StringVar(&expIntID, "integration-id", "", "Integration ID")
 	exporterCmd.Flags().StringVar(&expPort, "port", "9100", "Port to listen on")
-	
-	// New Flag for Service Control
+
+	// Service Control Flag
 	exporterCmd.Flags().StringVar(&serviceAction, "service", "", "Service action: install, uninstall, start, stop")
 }
