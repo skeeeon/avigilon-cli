@@ -10,11 +10,15 @@ An unofficial command-line interface and Prometheus exporter for the Avigilon We
 *   **Event Search**: Query historical events across all servers in a cluster (Motion, Login, Errors, etc.).
 *   **Output Control**: Trigger digital outputs connected to cameras or I/O modules.
 *   **Webhook Management**: Full CRUD support for event subscription webhooks.
-*   **Prometheus Exporter**: A built-in daemon (installable as a system service) that exposes System Health, Camera Status, Recording Integrity, and Alarm counts.
+*   **Prometheus Exporter**: A built-in daemon that exposes System Health, Camera Status, Recording Integrity, and Alarm counts.
+    *  Supports secure configuration via Windows Registry or Environment Variables to keep credentials out of process lists.
 
 ## Prerequisites
 
-To use this tool, you must have an User None and Key provided by Motorola, as well as a user with appropriate permissions configured in Avigilon.
+To use this tool, you must have:
+1.  **Integration Credentials:** A `User Nonce` and `User Key` provided by Motorola.
+2.  **User Account:** A dedicated Avigilon user with appropriate permissions.
+3.  **Time Sync:** **Critical.** The machine running this CLI must be time-synced (NTP) with the Avigilon Server. Time drift > 5 minutes will cause `403 Forbidden` errors.
 
 ## Installation
 
@@ -28,114 +32,64 @@ cd avigilon-cli
 # Build the binary
 go build -o avigilon-cli main.go
 
-# (Optional) Move to path
+# (Optional) Move to path (Linux) or C:\Windows\System32 (Windows)
 mv avigilon-cli /usr/local/bin/
 ```
 
-## Quick Start: Authentication
+## Quick Start: CLI Usage
 
 The CLI maintains a session token in `~/.avigilon-cli.yaml`. You must log in once to initialize the configuration.
 
-**Critical:** Ensure your system time is synced via NTP. The authentication hash relies on the system clock; time drift > 5 minutes will cause `403 Forbidden` errors.
+### Interactive Login
+
+You can pass credentials via flags or let your shell handle environment variables.
 
 ```bash
+# Option 1: Flags
 ./avigilon-cli login \
-  --host "https://192.168.1.50:8443/mt/api/rest/v1" \
+  --host "https://192.168.1.50/mt/api/rest/v1" \
   --username "administrator" \
   --password "myPassword" \
   --nonce "myUserNonce" \
   --key "myUserKey"
+
+# Option 2: Environment Variables (Bash/PowerShell)
+# Bash: export AVIGILON_PASSWORD="myPassword"
+# PS:   $env:AVIGILON_PASSWORD="myPassword"
+./avigilon-cli login --host "..." --username "admin" --nonce "..." --key "..."
 ```
 
-Once logged in, you can run other commands without providing credentials.
+### Common Commands
 
-## CLI Usage
-
-### Cameras
-List all cameras, their models, IPs, and connection status.
+**Cameras**
 ```bash
-# Human readable table
-./avigilon-cli cameras list
-
-# JSON output for scripting (jq compatible)
+# List all cameras (JSON format for scripting)
 ./avigilon-cli cameras list --json
+
+# Take a snapshot
+./avigilon-cli cameras snapshot --id "camera-id-123" --output "parking.jpg"
+
+# Trigger a 5-minute manual recording
+./avigilon-cli cameras record --ids "camera-id-123" --seconds 300
 ```
 
-Take a snapshot:
+**Alarms & Events**
 ```bash
-./avigilon-cli cameras snapshot --id "camera_id" --output "parking_lot.jpg"
-```
-
-Trigger/Stop Manual Recording:
-```bash
-# Start a 5-minute recording
-./avigilon-cli cameras record --ids "cam_id_1,cam_id_2" --seconds 300
-
-# Stop recording immediately
-./avigilon-cli cameras record --ids "cam_id_1" --stop
-```
-
-### Alarms
-List active alarms:
-```bash
+# List active alarms
 ./avigilon-cli alarms list
-```
 
-Acknowledge or Purge an alarm:
-```bash
-./avigilon-cli alarms update --id "alarm_id" --action "ACKNOWLEDGE" --note "Investigated by Security"
-./avigilon-cli alarms update --id "alarm_id" --action "PURGE"
-```
-
-### Historical Events
-Search for events across all servers in the cluster.
-```bash
-# List user events from the last hour (default)
-./avigilon-cli events list --topics "USER"
-
-# List application events from the last 24 hours
-./avigilon-cli events list --since 24h --topics "APPLICATION"
-
-# Filter by multiple specific topics
-./avigilon-cli events list --since 4h --topics "DEVICE_MOTION_START, USER_LOGIN"
-```
-
-### Digital Outputs
-Trigger a digital output.
-```bash
-# Trigger all outputs on a specific camera
-./avigilon-cli outputs trigger --id "camera_id" --camera
-
-# Trigger a specific digital output entity
-./avigilon-cli outputs trigger --id "output_entity_id"
-```
-
-### Webhooks
-Manage event subscriptions.
-```bash
-# Create a webhook
-./avigilon-cli webhooks create \
-  --url "http://myserver.com/events" \
-  --topics "MOTION,ALARM" \
-  --heartbeat=true \
-  --heartbeat-freq 60000
-
-# List webhooks
-./avigilon-cli webhooks list
-
-# Delete a webhook
-./avigilon-cli webhooks delete --id "webhook_id"
+# Search for motion events in the last 4 hours
+./avigilon-cli events list --since 4h --topics "DEVICE_MOTION_START"
 ```
 
 ---
 
 ## Prometheus Exporter
 
-The tool includes a built-in exporter mode. This runs as a long-lived process that scrapes the Avigilon API and exposes metrics for Prometheus.
+The tool runs as a long-lived service to scrape metrics for Prometheus. It handles session auto-renewal automatically.
 
-**Note:** The exporter handles its own session management. It will automatically re-authenticate if the session expires.
-
-### Running Interactively
+### Option 1: Interactive Run (Testing)
+Useful for verifying connectivity before installing as a service.
 ```bash
 ./avigilon-cli exporter \
   --host "https://192.168.1.50/mt/api/rest/v1" \
@@ -146,44 +100,67 @@ The tool includes a built-in exporter mode. This runs as a long-lived process th
   --port 9100
 ```
 
-### Installing as a System Service
-The tool can install itself as a service (systemd on Linux, Windows Service on Windows).
+### Option 2: Windows Service (Secure Installation)
+**Recommended.** This method prevents your password from appearing in the Windows Service properties or process list.
 
+1.  **Install the Service** (Run as Administrator):
+    *Do not pass credentials here.*
+    ```powershell
+    .\avigilon-cli.exe exporter --service install --host "https://192.168.1.50/mt/api/rest/v1"
+    ```
+
+2.  **Configure Credentials via Registry**:
+    *   Open `regedit`.
+    *   Navigate to: `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\avigilon-exporter`
+    *   Right-click the `avigilon-exporter` folder -> **New** -> **Multi-String Value**.
+    *   Name it: `Environment`
+    *   Double-click to edit and add your credentials (one per line):
+        ```text
+        AVIGILON_HOST=https://192.168.1.50/mt/api/rest/v1
+        AVIGILON_USERNAME=administrator
+        AVIGILON_PASSWORD=YourSecurePassword
+        AVIGILON_NONCE=YourUserNonce
+        AVIGILON_KEY=YourUserKey
+        ```
+
+3.  **Start the Service**:
+    ```powershell
+    .\avigilon-cli.exe exporter --service start
+    ```
+
+### Option 3: Linux Systemd Service
 ```bash
-# Install (Must run as Root/Admin)
-sudo ./avigilon-cli exporter --service install \
-  --host "..." --username "..." --password "..." --nonce "..." --key "..."
+# Install
+sudo ./avigilon-cli exporter --service install
+
+# Edit the service file to add Environment variables securely
+sudo systemctl edit avigilon-exporter
+# Add:
+# [Service]
+# Environment="AVIGILON_HOST=..."
+# Environment="AVIGILON_PASSWORD=..."
 
 # Start
 sudo ./avigilon-cli exporter --service start
-
-# Uninstall
-sudo ./avigilon-cli exporter --service stop
-sudo ./avigilon-cli exporter --service uninstall
 ```
 
 ### Exposed Metrics
-
 Metrics are available at `http://localhost:9100/metrics`.
 
 | Metric Name | Type | Labels | Description |
 | :--- | :--- | :--- | :--- |
-| `avigilon_up` | Gauge | None | 1 if the API scrape was successful, 0 otherwise. |
-| `avigilon_system_health` | Gauge | None | 1.0 = GOOD, 0.5 = WARN, 0.0 = BAD. |
-| `avigilon_servers_total` | Gauge | None | Number of servers detected in the cluster. |
-| `avigilon_camera_up` | Gauge | `id`, `name`, `model`, `ip` | 1 if camera is CONNECTED, 0 otherwise. |
-| `avigilon_camera_has_recorded_data` | Gauge | `id`, `name` | 1 if the camera has recorded footage on the timeline. |
-| `avigilon_cameras_total` | Gauge | `state` | Aggregate count of cameras by state (e.g., CONNECTED, DISCONNECTED). |
-| `avigilon_alarms_total` | Gauge | `state` | Aggregate count of alarms by state (e.g., ACTIVE, PURGED). |
-| `avigilon_scrape_duration_seconds` | Gauge | None | Time taken to interact with the API. |
+| `avigilon_up` | Gauge | None | 1 if API scrape succeeded. |
+| `avigilon_system_health` | Gauge | None | 1.0 (GOOD), 0.5 (WARN), 0.0 (BAD). |
+| `avigilon_camera_up` | Gauge | `id`, `name`, `ip` | 1 if Connected, 0 if Disconnected. |
+| `avigilon_camera_has_recorded_data` | Gauge | `id`, `name` | 1 if recording exists on timeline. |
+| `avigilon_alarms_total` | Gauge | `state` | Count of alarms by state (ACTIVE, PURGED). |
 
 ## Troubleshooting
 
-*   **403 Forbidden on Login:** Check your system time. The authentication hash includes a timestamp. If your machine time differs from the ACC Server time by more than 5-10 minutes, the token is rejected.
-*   **400 Bad Request on Webhooks:** Ensure your target URL is valid.
-*   **Certificate Errors:** The client is configured to skip TLS verification (`InsecureSkipVerify: true`) by default to support on-prem servers with self-signed certificates.
+*   **Service fails to start:** Check the Windows Event Viewer or syslog. If you installed using the "Secure" method, ensure you created the `Environment` registry key correctly as a **Multi-String Value** (REG_MULTI_SZ).
+*   **403 Forbidden:** Check system time. The authentication hash is time-sensitive.
+*   **TLS Errors:** The client defaults to `InsecureSkipVerify: true` to support self-signed certificates common on VMS appliances.
 
 ## Disclaimer
 
 This is an unofficial tool and is not affiliated with or endorsed by Motorola Solutions or Avigilon. Use at your own risk.
-```
