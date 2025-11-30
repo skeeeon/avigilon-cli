@@ -1,6 +1,6 @@
-# Avigilon Control Center CLI & Exporter
+# Avigilon CLI & Exporter
 
-A powerful command-line interface and Prometheus exporter for the Avigilon Web Endpoint Service. This tool allows system administrators to manage resources via scripts and monitor VMS health via Prometheus/Grafana.
+A command-line interface and Prometheus exporter for the Avigilon Web Endpoint Service. This tool allows system administrators to manage resources via scripts and monitor VMS health via Prometheus/Grafana.
 
 ## Features
 
@@ -22,7 +22,7 @@ To use this tool, you must have an User None and Key provided by Motorola, as we
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/avigilon-cli.git
+git clone https://github.com/skeeeon/avigilon-cli.git
 cd avigilon-cli
 
 # Build the binary
@@ -115,7 +115,7 @@ The tool includes a built-in exporter mode. This runs as a long-lived process th
 
 ```bash
 ./avigilon-cli exporter \
-  --host "https://192.168.1.50/mt/api/rest/v1" \
+  --host "https://192.168.1.50:8443/mt/api/rest/v1" \
   --username "administrator" \
   --password "myPassword" \
   --nonce "myUserNonce" \
